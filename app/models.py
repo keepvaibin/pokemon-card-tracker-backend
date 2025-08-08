@@ -1,187 +1,196 @@
-from sqlalchemy import (
-    Column, String, Integer, Float, DateTime, ForeignKey
-)
+# app/models.py
+from .db import db
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import relationship
-from .db import Base
 
-class Card(Base):
+class Card(db.Model):
     __tablename__ = "Card"
-    id = Column(String, primary_key=True)
-    name = Column(String, nullable=False)
-    supertype = Column(String)
-    subtypes = Column(ARRAY(String))
-    level = Column(String)
-    hp = Column(String)
-    types = Column(ARRAY(String))
-    evolvesFrom = Column(String)
-    evolvesTo = Column(ARRAY(String))
-    rules = Column(ARRAY(String))
-    flavorText = Column(String)
-    artist = Column(String)
-    rarity = Column(String)
-    number = Column(String, nullable=False)
-    nationalPokedexNumbers = Column(ARRAY(Integer))
-    setId = Column(String, ForeignKey("CardSet.id"))
-    retreatCost = Column(ARRAY(String))
-    convertedRetreatCost = Column(Integer)
-    createdAt = Column(DateTime)
-    updatedAt = Column(DateTime)
+    id = db.Column(db.String, primary_key=True)
+    name = db.Column(db.String, nullable=False)
+    supertype = db.Column(db.String)
+    subtypes = db.Column(ARRAY(db.String))
+    level = db.Column(db.String)
+    hp = db.Column(db.String)
+    types = db.Column(ARRAY(db.String))
+    evolvesFrom = db.Column(db.String)
+    evolvesTo = db.Column(ARRAY(db.String))
+    rules = db.Column(ARRAY(db.String))
+    flavorText = db.Column(db.String)
+    artist = db.Column(db.String)
+    rarity = db.Column(db.String)
+    number = db.Column(db.String, nullable=False)
+    nationalPokedexNumbers = db.Column(ARRAY(db.Integer))
+    setId = db.Column(db.String, db.ForeignKey("CardSet.id"))
+    retreatCost = db.Column(ARRAY(db.String))
+    convertedRetreatCost = db.Column(db.Integer)
+    createdAt = db.Column(db.DateTime)
+    updatedAt = db.Column(db.DateTime)
 
-    abilities = relationship("Ability", back_populates="card")
-    attacks = relationship("Attack", back_populates="card")
-    weaknesses = relationship("Weakness", back_populates="card")
-    resistances = relationship("Resistance", back_populates="card")
-    legalities = relationship("CardLegalities", uselist=False, back_populates="card")
-    images = relationship("CardImages", uselist=False, back_populates="card")
-    cardmarket = relationship("CardMarket", uselist=False, back_populates="card")
-    tcgplayer = relationship("TcgPlayer", uselist=False, back_populates="card")
-    set = relationship("CardSet", back_populates="cards")
+    abilities = db.relationship("Ability", back_populates="card")
+    attacks = db.relationship("Attack", back_populates="card")
+    weaknesses = db.relationship("Weakness", back_populates="card")
+    resistances = db.relationship("Resistance", back_populates="card")
+    legalities = db.relationship("CardLegalities", uselist=False, back_populates="card")
+    images = db.relationship("CardImages", uselist=False, back_populates="card")
+    cardmarket = db.relationship("CardMarket", uselist=False, back_populates="card")
+    tcgplayer = db.relationship("TcgPlayer", uselist=False, back_populates="card")
+    set = db.relationship("CardSet", back_populates="cards")
 
-class Ability(Base):
+
+class Ability(db.Model):
     __tablename__ = "Ability"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), nullable=False)
-    name = Column(String)
-    text = Column(String)
-    type = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), nullable=False)
+    name = db.Column(db.String)
+    text = db.Column(db.String)
+    type = db.Column(db.String)
 
-    card = relationship("Card", back_populates="abilities")
+    card = db.relationship("Card", back_populates="abilities")
 
-class Attack(Base):
+
+class Attack(db.Model):
     __tablename__ = "Attack"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), nullable=False)
-    name = Column(String)
-    cost = Column(ARRAY(String))
-    convertedEnergyCost = Column(Integer)
-    damage = Column(String)
-    text = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), nullable=False)
+    name = db.Column(db.String)
+    cost = db.Column(ARRAY(db.String))
+    convertedEnergyCost = db.Column(db.Integer)
+    damage = db.Column(db.String)
+    text = db.Column(db.String)
 
-    card = relationship("Card", back_populates="attacks")
+    card = db.relationship("Card", back_populates="attacks")
 
-class Weakness(Base):
+
+class Weakness(db.Model):
     __tablename__ = "Weakness"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"))
-    type = Column(String)
-    value = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"))
+    type = db.Column(db.String)
+    value = db.Column(db.String)
 
-    card = relationship("Card", back_populates="weaknesses")
+    card = db.relationship("Card", back_populates="weaknesses")
 
-class Resistance(Base):
+
+class Resistance(db.Model):
     __tablename__ = "Resistance"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"))
-    type = Column(String)
-    value = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"))
+    type = db.Column(db.String)
+    value = db.Column(db.String)
 
-    card = relationship("Card", back_populates="resistances")
+    card = db.relationship("Card", back_populates="resistances")
 
-class CardLegalities(Base):
+
+class CardLegalities(db.Model):
     __tablename__ = "CardLegalities"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), unique=True)
-    unlimited = Column(String)
-    standard = Column(String)
-    expanded = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), unique=True)
+    unlimited = db.Column(db.String)
+    standard = db.Column(db.String)
+    expanded = db.Column(db.String)
 
-    card = relationship("Card", back_populates="legalities")
+    card = db.relationship("Card", back_populates="legalities")
 
-class CardImages(Base):
+
+class CardImages(db.Model):
     __tablename__ = "CardImages"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), unique=True)
-    small = Column(String)
-    large = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), unique=True)
+    small = db.Column(db.String)
+    large = db.Column(db.String)
 
-    card = relationship("Card", back_populates="images")
+    card = db.relationship("Card", back_populates="images")
 
-class CardMarket(Base):
+
+class CardMarket(db.Model):
     __tablename__ = "CardMarket"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), unique=True)
-    url = Column(String)
-    updatedAt = Column(DateTime)
-    averageSellPrice = Column(Float)
-    lowPrice = Column(Float)
-    trendPrice = Column(Float)
-    germanProLow = Column(Float)
-    suggestedPrice = Column(Float)
-    reverseHoloSell = Column(Float)
-    reverseHoloLow = Column(Float)
-    reverseHoloTrend = Column(Float)
-    lowPriceExPlus = Column(Float)
-    avg1 = Column(Float)
-    avg7 = Column(Float)
-    avg30 = Column(Float)
-    reverseHoloAvg1 = Column(Float)
-    reverseHoloAvg7 = Column(Float)
-    reverseHoloAvg30 = Column(Float)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), unique=True)
+    url = db.Column(db.String)
+    updatedAt = db.Column(db.DateTime)
+    averageSellPrice = db.Column(db.Float)
+    lowPrice = db.Column(db.Float)
+    trendPrice = db.Column(db.Float)
+    germanProLow = db.Column(db.Float)
+    suggestedPrice = db.Column(db.Float)
+    reverseHoloSell = db.Column(db.Float)
+    reverseHoloLow = db.Column(db.Float)
+    reverseHoloTrend = db.Column(db.Float)
+    lowPriceExPlus = db.Column(db.Float)
+    avg1 = db.Column(db.Float)
+    avg7 = db.Column(db.Float)
+    avg30 = db.Column(db.Float)
+    reverseHoloAvg1 = db.Column(db.Float)
+    reverseHoloAvg7 = db.Column(db.Float)
+    reverseHoloAvg30 = db.Column(db.Float)
 
-    card = relationship("Card", back_populates="cardmarket")
+    card = db.relationship("Card", back_populates="cardmarket")
 
-class TcgPlayerPrices(Base):
+
+class TcgPlayerPrices(db.Model):
     __tablename__ = "TcgPlayerPrices"
-    id = Column(String, primary_key=True)
-    normalLow = Column(Float)
-    normalMid = Column(Float)
-    normalHigh = Column(Float)
-    normalMarket = Column(Float)
-    normalDirectLow = Column(Float)
-    holofoilLow = Column(Float)
-    holofoilMid = Column(Float)
-    holofoilHigh = Column(Float)
-    holofoilMarket = Column(Float)
-    holofoilDirectLow = Column(Float)
-    reverseHolofoilLow = Column(Float)
-    reverseHolofoilMid = Column(Float)
-    reverseHolofoilHigh = Column(Float)
-    reverseHolofoilMarket = Column(Float)
-    reverseHolofoilDirectLow = Column(Float)
+    id = db.Column(db.String, primary_key=True)
+    normalLow = db.Column(db.Float)
+    normalMid = db.Column(db.Float)
+    normalHigh = db.Column(db.Float)
+    normalMarket = db.Column(db.Float)
+    normalDirectLow = db.Column(db.Float)
+    holofoilLow = db.Column(db.Float)
+    holofoilMid = db.Column(db.Float)
+    holofoilHigh = db.Column(db.Float)
+    holofoilMarket = db.Column(db.Float)
+    holofoilDirectLow = db.Column(db.Float)
+    reverseHolofoilLow = db.Column(db.Float)
+    reverseHolofoilMid = db.Column(db.Float)
+    reverseHolofoilHigh = db.Column(db.Float)
+    reverseHolofoilMarket = db.Column(db.Float)
+    reverseHolofoilDirectLow = db.Column(db.Float)
 
-    tcgplayer = relationship("TcgPlayer", back_populates="prices", uselist=False)
+    tcgplayer = db.relationship("TcgPlayer", back_populates="prices", uselist=False)
 
-class TcgPlayer(Base):
+
+class TcgPlayer(db.Model):
     __tablename__ = "TcgPlayer"
-    id = Column(String, primary_key=True)
-    cardId = Column(String, ForeignKey("Card.id"), unique=True)
-    url = Column(String)
-    updatedAt = Column(DateTime)
-    pricesId = Column(String, ForeignKey("TcgPlayerPrices.id"), unique=True)
+    id = db.Column(db.String, primary_key=True)
+    cardId = db.Column(db.String, db.ForeignKey("Card.id"), unique=True)
+    url = db.Column(db.String)
+    updatedAt = db.Column(db.DateTime)
+    pricesId = db.Column(db.String, db.ForeignKey("TcgPlayerPrices.id"), unique=True)
 
-    card = relationship("Card", back_populates="tcgplayer")
-    prices = relationship("TcgPlayerPrices", back_populates="tcgplayer")
+    card = db.relationship("Card", back_populates="tcgplayer")
+    prices = db.relationship("TcgPlayerPrices", back_populates="tcgplayer")
 
-class CardSet(Base):
+
+class CardSet(db.Model):
     __tablename__ = "CardSet"
-    id = Column(String, primary_key=True)
-    name = Column(String)
-    series = Column(String)
-    printedTotal = Column(Integer)
-    total = Column(Integer)
-    ptcgoCode = Column(String)
-    releaseDate = Column(DateTime)
-    updatedAt = Column(DateTime)
-    symbol = Column(String)
-    logo = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    name = db.Column(db.String)
+    series = db.Column(db.String)
+    printedTotal = db.Column(db.Integer)
+    total = db.Column(db.Integer)
+    ptcgoCode = db.Column(db.String)
+    releaseDate = db.Column(db.DateTime)
+    updatedAt = db.Column(db.DateTime)
+    symbol = db.Column(db.String)
+    logo = db.Column(db.String)
 
-    cards = relationship("Card", back_populates="set")
-    legalities = relationship("SetLegalities", uselist=False, back_populates="set")
+    cards = db.relationship("Card", back_populates="set")
+    legalities = db.relationship("SetLegalities", uselist=False, back_populates="set")
 
-class SetLegalities(Base):
+
+class SetLegalities(db.Model):
     __tablename__ = "SetLegalities"
-    id = Column(String, primary_key=True)
-    setId = Column(String, ForeignKey("CardSet.id"), unique=True)
-    unlimited = Column(String)
-    standard = Column(String)
-    expanded = Column(String)
+    id = db.Column(db.String, primary_key=True)
+    setId = db.Column(db.String, db.ForeignKey("CardSet.id"), unique=True)
+    unlimited = db.Column(db.String)
+    standard = db.Column(db.String)
+    expanded = db.Column(db.String)
 
-    set = relationship("CardSet", back_populates="legalities")
+    set = db.relationship("CardSet", back_populates="legalities")
 
-class ImportMetadata(Base):
+
+class ImportMetadata(db.Model):
     __tablename__ = "ImportMetadata"
-    id = Column(String, primary_key=True)
-    totalCount = Column(Integer)
-    importedAt = Column(DateTime)
-    isFullImport = Column(Integer)  # Boolean stored as integer or use Boolean type if supported
+    id = db.Column(db.String, primary_key=True)
+    totalCount = db.Column(db.Integer)
+    importedAt = db.Column(db.DateTime)
+    isFullImport = db.Column(db.Integer)  # Boolean stored as integer or use Boolean type if supported

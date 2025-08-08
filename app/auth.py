@@ -1,5 +1,5 @@
 import os
-from flask import request, jsonify
+from flask import request, jsonify, g
 from google.oauth2 import id_token
 from google.auth.transport import requests as grequests
 
@@ -10,8 +10,12 @@ def verify_google_token(token):
         id_info = id_token.verify_oauth2_token(
             token, grequests.Request(), GOOGLE_CLIENT_ID
         )
+        if id_info['iss'] not in ['accounts.google.com', 'https://accounts.google.com']:
+            print("❌ Invalid issuer:", id_info['iss'])
+            return None
         return id_info
-    except Exception:
+    except ValueError as e:
+        print("❌ Token verification error:", e)
         return None
 
 def require_auth(func):
@@ -25,7 +29,7 @@ def require_auth(func):
         if not user_info:
             return jsonify({"error": "Invalid token"}), 401
 
-        request.user = user_info
+        g.user = user_info
         return func(*args, **kwargs)
     wrapper.__name__ = func.__name__
     return wrapper
