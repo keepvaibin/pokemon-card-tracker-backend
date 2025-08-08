@@ -1,6 +1,8 @@
 # app/models.py
 from .db import db
 from sqlalchemy.dialects.postgresql import ARRAY
+from dotenv import load_dotenv
+load_dotenv()
 
 class Card(db.Model):
     __tablename__ = "Card"
@@ -194,3 +196,13 @@ class ImportMetadata(db.Model):
     totalCount = db.Column(db.Integer)
     importedAt = db.Column(db.DateTime)
     isFullImport = db.Column(db.Integer)  # Boolean stored as integer or use Boolean type if supported
+
+# app/models.py
+class PriceHistory(db.Model):
+    __bind_key__ = "timescale"
+    __tablename__ = "PriceHistory"  # matches your quoted CamelCase table
+
+    cardId = db.Column(db.String, primary_key=True)
+    time = db.Column(db.DateTime(timezone=True), primary_key=True)
+    averageSellPrice = db.Column(db.Float)
+    source = db.Column(db.String)

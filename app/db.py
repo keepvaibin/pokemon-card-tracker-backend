@@ -1,5 +1,6 @@
-# app/db.py
+# db.py
 from flask_sqlalchemy import SQLAlchemy
+from dotenv import load_dotenv
+load_dotenv()
 
-# This is our global db object that models will inherit from
 db = SQLAlchemy()

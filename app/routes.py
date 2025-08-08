@@ -7,8 +7,23 @@ from .models import (
 )
 from .db import db
 from .auth import require_auth
+from sqlalchemy import and_, text
+from dotenv import load_dotenv
+load_dotenv()
+
+from datetime import datetime, timezone
+from .models import PriceHistory
 
 bp = Blueprint("routes", __name__)
+
+
+def _parse_iso(ts: str | None):
+    if not ts: return None
+    ts = ts.strip()
+    if ts.endswith("Z"):  # allow ...Z
+        ts = ts[:-1] + "+00:00"
+    return datetime.fromisoformat(ts)
+
 
 def serialize_card_full(card: Card):
     """Serialize a card with all related data (matching model.py exactly)."""
@@ -366,3 +381,51 @@ def get_card(card_id):
     if not card:
         return jsonify({"error": "Card not found"}), 404
     return jsonify(serialize_card_full(card))
+
+
+@bp.route("/cards/<string:card_id>/price/history", methods=["GET"])
+@require_auth
+def get_card_price_history(card_id):
+    order = request.args.get("order", "asc").lower()
+    from_ts = _parse_iso(request.args.get("from"))
+    to_ts   = _parse_iso(request.args.get("to"))
+    limit   = request.args.get("limit", type=int)
+
+    q = PriceHistory.query.filter(PriceHistory.cardId == card_id)
+    if from_ts:
+        q = q.filter(PriceHistory.time >= from_ts)
+    if to_ts:
+        q = q.filter(PriceHistory.time < to_ts)
+
+    q = q.order_by(PriceHistory.time.desc() if order == "desc" else PriceHistory.time.asc())
+    if limit:
+        q = q.limit(limit)
+
+    rows = q.all()
+    return jsonify({
+        "cardId": card_id,
+        "count": len(rows),
+        "history": [
+            {
+                "time": r.time.isoformat(),
+                "averageSellPrice": r.averageSellPrice,
+                "source": r.source or "unknown",
+            } for r in rows
+        ],
+    })
+
+@bp.route("/cards/<string:card_id>/price/latest", methods=["GET"])
+@require_auth
+def get_card_price_latest(card_id):
+    row = (PriceHistory.query
+           .filter(PriceHistory.cardId == card_id)
+           .order_by(PriceHistory.time.desc())
+           .first())
+    if not row:
+        return jsonify({"cardId": card_id, "latest": None})
+    return jsonify({
+        "cardId": row.cardId,
+        "time": row.time.isoformat(),
+        "averageSellPrice": row.averageSellPrice,
+        "source": row.source or "unknown",
+    })
