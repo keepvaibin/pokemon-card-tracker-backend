@@ -1,6 +1,8 @@
 # Pokémon Cards API
 
-This README documents every available API endpoint, the authentication scheme, query filtering, pagination, and typical responses for this Flask + SQLAlchemy service.
+A REST API for querying Pokémon TCG cards with filterable pricing snapshots and (optionally) time‑series price history. This README is **authoritative** to the current backend code and includes every supported filter (with examples), authentication, pagination, and all endpoints.
+
+> TL;DR: Authentication is required on all routes (Google ID Token). PostgreSQL is required. TimescaleDB is optional but required for price history endpoints.
 
 ---
 
@@ -8,392 +10,384 @@ This README documents every available API endpoint, the authentication scheme, q
 
 ### Requirements
 
-* Python 3.10+
-* Flask + SQLAlchemy
-* A database URL (SQLite by default)
-* A Google OAuth **ID token** (from Google Sign-In) for every request
+- Python 3.10+
+- Flask + SQLAlchemy
+- **PostgreSQL** (required; uses `ARRAY` columns)
+- (Optional) **TimescaleDB** if you want `/price/history` & `/price/latest`
+- Google OAuth **Client ID** (for verifying ID tokens)
 
 ### Environment variables
 
-* `DATABASE_URL` – defaults to `sqlite:///app.db` if unset.&#x20;
-* `SECRET_KEY` – Flask secret (defaults to `dev` for local).&#x20;
-* `GOOGLE_CLIENT_ID` – your Google OAuth Client ID (required for token verification).&#x20;
+- `DATABASE_URL` – PostgreSQL connection string (required)
+- `GOOGLE_CLIENT_ID` – OAuth Client ID used to verify ID tokens (required)
+- `SECRET_KEY` – Flask secret key (optional; default `dev`)
+- `TIMESCALE_URL` – PostgreSQL/Timescale connection string (optional; required only for price history endpoints)
 
-### App factory
+### Run
 
-The Flask app binds SQLAlchemy, registers routes, and (optionally) creates tables on start.&#x20;
+```bash
+export DATABASE_URL=postgresql://...
+export GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+export SECRET_KEY=dev
+# optional
+export TIMESCALE_URL=postgresql://...   # needed for /price/history and /price/latest
 
----
+flask run
+```
 
-## Authentication
+### Authentication
 
-All endpoints require a **Google OAuth ID token** in the `Authorization` header:
+Every request **must** include a Google **ID token** in the `Authorization` header:
 
 ```
 Authorization: Bearer <GOOGLE_ID_TOKEN>
 ```
 
-Tokens are verified server-side using Google’s library and your `GOOGLE_CLIENT_ID`. Invalid or missing tokens return `401`. On success, the verified user info is stored on `g.user`. &#x20;
-
-**401 errors**
-
-* Missing/invalid header → `{"error":"Unauthorized"}`&#x20;
-* Bad token → `{"error":"Invalid token"}`&#x20;
+Invalid or missing tokens return `401 Unauthorized`.
 
 ---
 
-## Base URL & Versioning
+## Data Model (high level)
 
-* **Base URL:** (your deployment origin)
-* **Versioning:** Not implemented (single version).
+This API merges data from the following tables when needed:
 
----
+- `Card` – core card fields (`id`, `name`, `supertype`, `rarity`, `hp` [string], `level` [string], `number` [string], `types[]`, `artist`, set linkage, images, etc.).
+- `CardMarket` – snapshot pricing from Cardmarket (`averageSellPrice`, `trendPrice`, `lowPrice`).
+- `TcgPlayer` & `TcgPlayerPrices` – TCGplayer price blocks; quick filters use **Market** fields (`normalMarket`, `holofoilMarket`, `reverseHolofoilMarket`).
+- (Optional) `PriceHistory` – time‑series prices (cardId, time, averageSellPrice, source).
 
-## Data Model (response shapes)
+> Note: `hp`, `level`, and `number` are stored as **strings** in the DB. They support equality filtering only (no numeric comparisons) unless you extend the backend to cast them to integers.
 
-You will see two shapes of a card:
+### Response shapes
 
-* **Basic** (list view, used by `GET /cards`) — includes IDs, key attributes, minimal set info, price snapshots, images.  &#x20;
-* **Full** (detail view, used by `GET /cards/:id` and `/cards/bulk`) — includes abilities, attacks, weaknesses, resistances, legalities, full set, cardmarket and tcgplayer blocks.   &#x20;
-
-> **Note:** Field names/structure follow the serializers in `routes.py`. If you add fields in the models/serializers, responses will grow accordingly.&#x20;
+- **Basic card** (used by `GET /cards`): key identity fields, minimal set info, images, and the quick pricing snapshot (Cardmarket and TCGplayer markets).
+- **Full card** (used by `GET /cards/:id` and `POST /cards/bulk`): basic card + abilities, attacks, weaknesses, resistances, full set block, and detailed pricing blocks.
 
 ---
 
 ## Pagination
 
-List endpoints use page/size parameters and compute `total_pages`.
+All list endpoints include these parameters:
 
-* `page` (default `1`) and `page_size` (default `15`, max `100`). Invalid values return `400`.&#x20;
-* Response includes: `page`, `page_size`, `total`, `total_pages`, and `cards`.&#x20;
+- `page` – default `1`
+- `page_size` – default `15`, maximum `100`
+
+Responses include: `page`, `page_size`, `total`, `total_pages`, and the data array.
 
 ---
 
-## Filtering
+## ✅ Filters (complete list)
 
-### Equality filters (string/ID fields)
+The `/cards` endpoint supports **equality filters** and **numeric comparison filters**. All provided filters combine with **AND** semantics.
 
-Pass as query params (exact match):
+### Filters overview (cheat‑sheet)
 
-* `id`, `name`, `supertype`, `rarity`, `hp`, `level`, `number`, `setId`, `artist`.&#x20;
+| Parameter (query key) | Type    | Operators                               | Source table/column                  | Notes |
+|---|---|---|---|---|
+| `id`                  | string  | `=`                                      | `Card.id`                            | Exact match |
+| `name`                | string  | `=`                                      | `Card.name`                          | Exact match |
+| `supertype`           | string  | `=`                                      | `Card.supertype`                     | Exact match |
+| `rarity`              | string  | `=`                                      | `Card.rarity`                        | Exact match |
+| `hp`                  | string  | `=`                                      | `Card.hp`                            | **String equality only** |
+| `level`               | string  | `=`                                      | `Card.level`                         | **String equality only** |
+| `number`              | string  | `=`                                      | `Card.number`                        | **String equality only** |
+| `setId`               | string  | `=`                                      | `Card.setId`                         | Exact match |
+| `artist`              | string  | `=`                                      | `Card.artist`                        | Exact match |
+| `averageSellPrice_*`  | number  | `_gte`, `_lte`, `_gt`, `_lt`             | `CardMarket.averageSellPrice`        | Numeric compare |
+| `trendPrice_*`        | number  | `_gte`, `_lte`, `_gt`, `_lt`             | `CardMarket.trendPrice`              | Numeric compare |
+| `lowPrice_*`          | number  | `_gte`, `_lte`, `_gt`, `_lt`             | `CardMarket.lowPrice`                | Numeric compare |
+| `normalMarket_*`      | number  | `_gte`, `_lte`, `_gt`, `_lt`             | `TcgPlayerPrices.normalMarket`       | Numeric compare |
+| `holofoilMarket_*`    | number  | `_gte`, `_lte`, `_gt`, `_lt`             | `TcgPlayerPrices.holofoilMarket`     | Numeric compare |
+| `reverseHolofoilMarket_*` | number | `_gte`, `_lte`, `_gt`, `_lt`          | `TcgPlayerPrices.reverseHolofoilMarket` | Numeric compare |
+
+> The `_*` suffix means **pick one of** `_gte`, `_lte`, `_gt`, or `_lt`. Example: `trendPrice_lte=5`.
+
+---
+
+## Filtering – details and examples
+
+Below, each filter is explained with a working example. All examples include auth headers; replace `TOKEN` with a valid Google ID token.
+
+> Base URL is assumed to be `http://localhost:5000` for curl examples.
+
+### Equality filters (string exact matches)
+
+- `id` – a specific card ID (e.g., `sv5-29`).  
+  ```bash
+  curl -s --location 'http://localhost:5000/cards?id=sv5-29' \
+    --header 'Authorization: Bearer TOKEN'
+  ```
+
+- `name` – exact name match.  
+  ```bash
+  curl -s 'http://localhost:5000/cards?name=Pikachu' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `supertype` – e.g., `Pokémon`, `Trainer`, `Energy`.  
+  ```bash
+  curl -s 'http://localhost:5000/cards?supertype=Pokémon' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `rarity` – e.g., `Common`, `Rare`, `Rare Holo`.  
+  ```bash
+  curl -s 'http://localhost:5000/cards?rarity=Rare' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `hp` – **string** equality only (e.g., `"60"`, `"120"`).  
+  ```bash
+  curl -s 'http://localhost:5000/cards?hp=120' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `level` – **string** equality only.  
+  ```bash
+  curl -s 'http://localhost:5000/cards?level=5' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `number` – **string** equality only (the printed card number within the set).  
+  ```bash
+  curl -s 'http://localhost:5000/cards?number=1' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `setId` – the set identifier (e.g., `swsh1`).  
+  ```bash
+  curl -s 'http://localhost:5000/cards?setId=swsh1' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `artist` – the card artist’s exact name.  
+  ```bash
+  curl -s --get 'http://localhost:5000/cards' \
+    --data-urlencode 'artist=Ken Sugimori' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+> ⚠️ **Case-sensitivity** follows how values are stored in the DB. If you need case-insensitive or partial matching, extend the backend with `ilike`/`lower()` accordingly.
 
 ### Numeric comparison filters
 
-Use suffixes on the keys below: `_<op>` where `<op>` ∈ `_gte`, `_lte`, `_gt`, `_lt`.
+Use one of the suffixes `_gte`, `_lte`, `_gt`, `_lt` with the **base key** shown below.
 
-Supported numeric keys:
+#### Cardmarket
 
-* `hp`, `averageSellPrice`, `trendPrice`, `lowPrice`, `normalMarket`, `holofoilMarket`, `reverseHolofoilMarket`.&#x20;
+- `averageSellPrice_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?averageSellPrice_gte=1.5' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
 
-**Examples**
+- `trendPrice_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?trendPrice_lte=5' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
 
-* `GET /cards?hp_gte=120&rarity=Rare`
-* `GET /cards?trendPrice_lte=5.0`
-* `GET /cards?normalMarket_gt=0.5&artist=Ken%20Sugimori`
+- `lowPrice_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?lowPrice_gt=0.05' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
 
-Invalid numeric values return `400`.&#x20;
+#### TCGplayer (Market prices)
 
-**Join behavior**
-When any filter is supplied, the query left-joins `CardMarket`, `TcgPlayer`, and `TcgPlayerPrices` so price filters work, then applies the `AND` of all filters.&#x20;
+- `normalMarket_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?normalMarket_gte=0.25' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `holofoilMarket_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?holofoilMarket_lte=10' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+- `reverseHolofoilMarket_*`  
+  ```bash
+  curl -s 'http://localhost:5000/cards?reverseHolofoilMarket_lt=2.5' \
+    -H 'Authorization: Bearer TOKEN'
+  ```
+
+**Combination examples** (AND semantics):
+
+```bash
+# Rare cards in Sword & Shield base set with Cardmarket trend <= $5
+curl -s 'http://localhost:5000/cards?setId=swsh1&rarity=Rare&trendPrice_lte=5' \
+  -H 'Authorization: Bearer TOKEN'
+
+# Artist + TCGplayer filter
+curl -s --get 'http://localhost:5000/cards' \
+  --data-urlencode 'artist=Ken Sugimori' \
+  --data-urlencode 'normalMarket_gt=0.15' \
+  -H 'Authorization: Bearer TOKEN'
+```
+
+> **Why no `hp_gte`?** `hp` is a string in the DB. Numeric comparisons on strings can cause DB errors. Use `hp=<value>` for exact string matches. If you want numeric HP filters, add a cast in the backend (see FAQ).
 
 ---
 
 ## Endpoints
 
-### 1) `GET /cards` — List cards (paginated + filters)
+### `GET /cards`
 
-Returns a page of **basic** card objects. Supports pagination and the filters above. &#x20;
+List cards (basic shape) with pagination and all filters described above.
 
-**Request**
+**Query params:** `page`, `page_size`, any of the filters.  
+**Errors:** `400` (invalid pagination or numeric value), `401` (unauthorized).
 
+**Example**
+
+```bash
+curl -s 'http://localhost:5000/cards?page=2&page_size=25&rarity=Rare&trendPrice_lte=5' \
+  -H 'Authorization: Bearer TOKEN'
 ```
-GET /cards?page=1&page_size=20&hp_gte=100&rarity=Rare
-Authorization: Bearer <GOOGLE_ID_TOKEN>
+
+---
+
+### `GET /cards/filters`
+
+Helper metadata for building filter UIs.
+
+- **Ranges** (min/max):
+  - Cardmarket: `averageSellPrice`, `trendPrice`, `lowPrice`
+  - TCGplayer Prices: `normalLow`, `holofoilLow`, `reverseHolofoilLow`
+  - Card (string ranges): `hp`, `level`, `number` (lexicographic)
+- **Categories** (distinct values): `artists`, `rarities`, `supertypes`, `types[]`, `sets` (`{id,name}`)
+
+**Example**
+
+```bash
+curl -s 'http://localhost:5000/cards/filters' \
+  -H 'Authorization: Bearer TOKEN'
 ```
 
-**Response (200)**
+> Note: `hp`, `level`, `number` ranges are derived as strings; they are useful for UIs but not for numeric comparisons unless you cast in SQL.
 
+---
+
+### `GET /cards/:id`
+
+Full card detail. Returns `404` if not found.
+
+```bash
+curl -s 'http://localhost:5000/cards/swsh1-1' \
+  -H 'Authorization: Bearer TOKEN'
+```
+
+---
+
+### `POST /cards/bulk`
+
+Fetch multiple full cards by IDs.
+
+**Body**
+```json
+{ "ids": ["swsh1-1", "xy7-54"] }
+```
+
+**Example**
+```bash
+curl -s -X POST 'http://localhost:5000/cards/bulk' \
+  -H 'Authorization: Bearer TOKEN' \
+  -H 'Content-Type: application/json' \
+  --data '{"ids":["swsh1-1","xy7-54"]}'
+```
+
+**Errors:** `400` if `ids` missing/not an array/empty after cleaning; `401` unauthorized.
+
+---
+
+### `GET /cards/:id/price/history`  _(requires Timescale)_
+
+Returns time‑series price entries from `PriceHistory` for a card ID.
+
+**Query params**
+- `from` – ISO 8601 timestamp (inclusive). Example: `2024-01-01T00:00:00Z`
+- `to` – ISO 8601 timestamp (exclusive). Optional.
+- `order` – `asc` (default) or `desc`
+- `limit` – integer row cap (optional)
+
+**Example**
+
+```bash
+curl -s 'http://localhost:5000/cards/swsh1-1/price/history?from=2024-01-01T00:00:00Z&order=desc&limit=200' \
+  -H 'Authorization: Bearer TOKEN'
+```
+
+**Response**
 ```json
 {
-  "page": 1,
-  "page_size": 20,
-  "total": 1234,
-  "total_pages": 62,
-  "cards": [
-    {
-      "id": "swsh1-1",
-      "name": "Bulbasaur",
-      "supertype": "Pokémon",
-      "subtypes": ["Basic"],
-      "level": 5,
-      "hp": 60,
-      "types": ["Grass"],
-      "rarity": "Common",
-      "artist": "Mitsuhiro Arita",
-      "number": "1",
-      "nationalPokedexNumbers": [1],
-      "retreatCost": ["Colorless"],
-      "createdAt": "2024-01-01T00:00:00",
-      "set": { "id": "swsh1", "name": "Sword & Shield", "series": "Sword & Shield" },
-      "market": { "averageSellPrice": 0.25, "trendPrice": 0.21, "lowPrice": 0.02 },
-      "tcgplayerPrices": { "normalMarket": 0.2, "holofoilMarket": null, "reverseHolofoilMarket": 0.5 },
-      "images": { "small": "...", "large": "..." }
-    }
+  "cardId": "swsh1-1",
+  "count": 2,
+  "history": [
+    { "time": "2024-01-02T00:00:00+00:00", "averageSellPrice": 0.23, "source": "admin" },
+    { "time": "2024-01-01T00:00:00+00:00", "averageSellPrice": 0.22, "source": "admin" }
   ]
 }
 ```
 
-(Field presence depends on data; see serializer.)&#x20;
-
-**Errors**
-
-* `400 Invalid pagination parameters` for bad `page`/`page_size`.&#x20;
-* `400 Invalid numeric value for <key>` for bad numeric filters.&#x20;
-* `401` on missing/invalid auth (see Authentication).
-
-**cURL**
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards?page=1&page_size=50&hp_gte=100&normalMarket_lte=1.0"
-```
-
 ---
 
-### 2) `GET /cards/filters` — Filter metadata (ranges & categories)
+### `GET /cards/:id/price/latest`  _(requires Timescale)_
 
-Provides precomputed **numeric ranges** and **distinct categorical values** to build UIs (sliders, dropdowns).&#x20;
+Latest available timeseries point for a card.
 
-**Ranges include**
+**Example**
+```bash
+curl -s 'http://localhost:5000/cards/swsh1-1/price/latest' \
+  -H 'Authorization: Bearer TOKEN'
+```
 
-* From `Card`: `hp`, `level`, `number`&#x20;
-* From `CardMarket`: `averageSellPrice`, `trendPrice`, `lowPrice`&#x20;
-* From `TcgPlayerPrices`: `normalLow`, `holofoilLow`, `reverseHolofoilLow`&#x20;
-
-**Categories include**
-
-* `artists`, `rarities`, `supertypes`, `types`, and `sets` (id, name). &#x20;
-
-**Response (200)**
-
+**Response**
 ```json
-{
-  "ranges": {
-    "hp": { "min": 30, "max": 340 },
-    "level": { "min": 1, "max": 100 },
-    "number": { "min": 1, "max": 300 },
-    "averageSellPrice": { "min": 0.02, "max": 999.99 },
-    "trendPrice": { "min": 0.01, "max": 999.99 },
-    "lowPrice": { "min": 0.01, "max": 999.99 },
-    "tcgplayer": {
-      "normalLow": { "min": 0.01, "max": 999.99 },
-      "holofoilLow": { "min": 0.01, "max": 999.99 },
-      "reverseHolofoilLow": { "min": 0.01, "max": 999.99 }
-    }
-  },
-  "categories": {
-    "artists": ["..."],
-    "rarities": ["..."],
-    "supertypes": ["..."],
-    "types": ["..."],
-    "sets": [{ "id": "swsh1", "name": "Sword & Shield" }]
-  }
-}
+{ "cardId": "swsh1-1", "time": "2024-01-02T00:00:00+00:00", "averageSellPrice": 0.23, "source": "admin" }
 ```
-
-**cURL**
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards/filters"
-```
-
----
-
-### 3) `GET /cards/:id` — Card detail
-
-Returns the **full** card object for a given `card_id`.
-
-* `404` if not found.&#x20;
-
-**cURL**
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards/swsh1-1"
-```
-
----
-
-### 4) `POST /cards/bulk` — Batch fetch by IDs
-
-Request body must include `ids` (array of strings). Returns the **full** objects for the found IDs and `count`. &#x20;
-
-**Request**
-
-```json
-{
-  "ids": ["swsh1-1", "swsh1-2", "xy7-54"]
-}
-```
-
-**Response (200)**
-
-```json
-{
-  "count": 3,
-  "cards": [ { /* full card */ }, { /* full card */ }, { /* full card */ } ]
-}
-```
-
-**Errors**
-
-* Missing or non-list `ids` → `400` with message.&#x20;
-* Empty/invalid strings after cleaning → `400`.&#x20;
-
-**cURL**
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"ids":["swsh1-1","swsh1-2"]}' \
-     https://api.example.com/cards/bulk
-```
-
----
-
-## Response Field Reference (selected)
-
-### Basic card object (from `GET /cards`)
-
-* Core: `id`, `name`, `supertype`, `subtypes`, `level`, `hp`, `types`, `rarity`, `artist`, `number`, `nationalPokedexNumbers`, `retreatCost`, `createdAt`.&#x20;
-* Set (minimal): `id`, `name`, `series`.&#x20;
-* Market snapshot: `averageSellPrice`, `trendPrice`, `lowPrice`.&#x20;
-* TCGPlayer quick prices: `normalMarket`, `holofoilMarket`, `reverseHolofoilMarket`.&#x20;
-* Images: `small`, `large`.&#x20;
-
-### Full card object (from `GET /cards/:id` and `/cards/bulk`)
-
-* Everything above **plus**: evolves, rules, flavorText, full set block (logo, symbol, printedTotal, total, ptcgoCode, releaseDate, updatedAt, legalities), abilities, attacks, weaknesses, resistances, legalities, images, full `cardmarket` (many price stats), full `tcgplayer` (nested prices).   &#x20;
-
----
-
-## Error Model
-
-* `400` — invalid pagination or numeric filter input; invalid bulk payload (see above).  &#x20;
-* `401` — missing or invalid token (see Authentication).&#x20;
-* `404` — card not found for `GET /cards/:id`.&#x20;
+If none: `{ "cardId": "swsh1-1", "latest": null }`
 
 ---
 
 ## Sorting
 
-* **Not implemented.** Results are whatever the DB returns given filters/pagination.
+_Not implemented._ Add `ORDER BY` in the `/cards` route if needed.
 
 ---
 
-## Rate Limiting & Caching
+## Error codes
 
-* **Not implemented** in the provided code. Add reverse proxy (e.g., Cloudflare) or Flask middleware if needed.
-
----
-
-## CORS
-
-* **Not configured** in the provided code. If you are calling this from a browser app on a different origin, add Flask-CORS.
+- `400 Bad Request` – invalid pagination, invalid numeric filter value, or malformed body
+- `401 Unauthorized` – missing/invalid Google ID token
+- `404 Not Found` – resource not found (e.g., card ID)
 
 ---
 
-## Running Locally
+## FAQ / Notes
 
-Typical pattern:
+**Can I do `hp_gte=120`?**  
+Not by default. `hp` is a **string** column. To enable numeric HP filtering, cast `Card.hp` to an integer in the query builder before applying comparison operators (and ensure non‑numeric values are handled).
 
-```bash
-export GOOGLE_CLIENT_ID="your.apps.googleusercontent.com"
-export FLASK_APP="yourpackage:create_app"
-export FLASK_ENV=development
-flask run
-```
+**Are string filters case sensitive?**  
+They follow DB storage. If you want case‑insensitive behavior, change `==` comparisons to `ilike` / `lower()` in the backend.
 
-Tables are auto-created in app context for local dev. (Remove or gate in production.)&#x20;
+**Can I filter by arrays like `types[]`?**  
+Not in this version. Add a custom filter that checks membership against the Postgres array (e.g., `Card.types.contains([...])`) if desired.
 
----
+**How are multiple filters combined?**  
+All with **AND** semantics.
 
-## Example Flows
-
-### Web client (Google Sign-In)
-
-1. Obtain a **Google ID token** in the browser (Google Identity Services).
-2. Call API endpoints with `Authorization: Bearer <ID_TOKEN>`. &#x20;
-
-### Building a filters UI
-
-* Call `GET /cards/filters` to populate sliders (`hp`, price ranges) and dropdowns (`artists`, `rarities`, `types`, `sets`). Then query `GET /cards` with equality + numeric suffix filters to narrow results.  &#x20;
+**Why PostgreSQL only?**  
+The models use Postgres `ARRAY` types and the price history feature expects Timescale/Postgres.
 
 ---
 
-## Security Notes
+## Changelog (this README)
 
-* Only **Google ID tokens** issued by `accounts.google.com` are accepted. Issuer is verified.&#x20;
-* Keep `SECRET_KEY` and `GOOGLE_CLIENT_ID` secret. Use secure production values. &#x20;
-
----
-
-## Change Log / Extensibility
-
-* New fields: extend serializers in `routes.py`.&#x20;
-* New filters: add to `allowed_filters` or `allowed_numeric_filters` and ensure joins include target tables.  &#x20;
-
----
-
-## Glossary of Price Fields (selected)
-
-* **Cardmarket**: `averageSellPrice`, `trendPrice`, `lowPrice`, `lowPriceExPlus`, `avg1/7/30`, `reverseHolo*` variants, etc.&#x20;
-* **TCGPlayer**: Prices for `normal`, `holofoil`, `reverseHolofoil` tiers: `Low`, `Mid`, `High`, `Market`, `DirectLow`.&#x20;
-
----
-
-## FAQ
-
-**Q: Can I search by partial name?**
-A: Not in the current code (only exact equality on `name`). Consider adding `ilike` for substring search to `GET /cards`.
-
-**Q: Can I sort results?**
-A: Not yet; add `order_by` support in the list endpoint.
-
-**Q: Do I need separate OAuth for server-to-server?**
-A: As written, the API expects a Google **ID** token (user sign-in). For service-to-service, you could accept and verify Google service account **JWTs** with a different verifier.
-
----
-
-## Handy cURL Cheatsheet
-
-* List rare cards with HP ≥ 120, 50 per page:
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards?rarity=Rare&hp_gte=120&page_size=50"
-```
-
-* Get price-capped search (trend ≤ \$5):
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards?trendPrice_lte=5"
-```
-
-* Fetch detail for a single card:
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://api.example.com/cards/swsh1-1"
-```
-
-* Bulk by IDs:
-
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"ids":["swsh1-1","xy7-54"]}' \
-  https://api.example.com/cards/bulk
-```
+- Clarified Postgres requirement
+- Documented **all** supported filters with examples
+- Added the Timescale‑based endpoints
+- Explicitly noted string vs numeric behavior for `hp`, `level`, `number`
+- Kept other sections consistent with the existing project
