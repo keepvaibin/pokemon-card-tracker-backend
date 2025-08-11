@@ -1,0 +1,7 @@
+Flask
+Flask-SQLAlchemy
+python-dotenv
+google-auth
+google-auth-oauthlib
+psycopg2-binary
+SQLAlchemy
